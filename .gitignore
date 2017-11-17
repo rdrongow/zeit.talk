@@ -1,0 +1,3 @@
+*.pyc
+.eggs/
+src/zeit.talk.egg-info/
