@@ -1,9 +1,9 @@
 from __future__ import absolute_import
 
-import ast
 import logging
 import re
 import urlparse
+import lxml
 
 import jinja2
 import jinja2.ext
@@ -25,6 +25,8 @@ import zeit.cms.content.sources
 import zeit.cms.repository.interfaces
 import zeit.cms.repository.repository
 import zeit.connector
+import zeit.content.article.edit.interfaces
+import zeit.cms.interfaces
 
 import zeit.web
 import zeit.web.core.cache
@@ -34,6 +36,8 @@ import zeit.web.core.repository  # activate monkeypatches
 import zeit.web.core.security
 import zeit.web.core.solr  # activate monkeypatches
 import zeit.web.core.source  # activate monkeypatches
+
+from zeit.content.article.interfaces import IArticle
 
 
 log = logging.getLogger(__name__)
@@ -117,7 +121,8 @@ class Application(object):
             'host_restriction', zeit.web.core.routing.HostRestrictionPredicate,
             weighs_more_than=('traverse',))
 
-
+        config.add_route('lead_story', '/lead-story')
+        config.add_route('read_story', '/read-story')
 
         config.set_root_factory(self.get_repository)
         config.scan(package=zeit.talk, ignore=self.DONT_SCAN)
@@ -365,4 +370,63 @@ class FeatureToggleSource(zeit.cms.content.sources.SimpleContextualXMLSource):
         except TypeError:
             return False
 
+
 FEATURE_TOGGLES = FeatureToggleSource()(None)
+
+
+@pyramid.view.view_config(
+    route_name='lead_story',
+    renderer='json')
+def get_lead_story(request):
+    cp = zeit.cms.interfaces.ICMSContent('http://xml.zeit.de/index')
+    regions = [zeit.web.core.centerpage.IRendered(x)
+               for x in cp.values() if x.visible]
+    teasers = []
+    for region in regions:
+        for area in region.values():
+            for teaser in zeit.content.cp.interfaces.ITeaseredContent(area):
+                if IArticle in zope.interface.providedBy(teaser):
+                    teasers.append(teaser)
+
+    lead_teaser = teasers[0]
+    return {'title': lead_teaser.teaserTitle.strip(),
+            'text': lead_teaser.teaserText.strip(),
+            'uniqueId': lead_teaser.uniqueId}
+
+
+@pyramid.view.view_config(
+    route_name='read_story',
+    renderer='json')
+def read_story(request):
+    try:
+        uniqueId = request.params['uniqueId']
+        resource = zeit.cms.interfaces.ICMSContent(uniqueId)
+        ssml = body_to_ssml(
+            zeit.content.article.edit.interfaces.IEditableBody(
+                resource).xml)
+        return {'ssml': ssml}
+    except:
+        # XXX: Needs better error handling.
+        return {'ssml': "<speak>Bei der Anfrage trat ein Problem auf</speak>"}
+
+
+def body_to_ssml(body):
+    filter_xslt = lxml.etree.XML("""
+        <xsl:stylesheet version="1.0"
+            xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+            <xsl:output method="html"
+                        omit-xml-declaration="yes" />
+          <xsl:template match='/'>
+               <speak>
+                    <xsl:apply-templates select="//p" />
+               </speak>
+          </xsl:template>
+          <xsl:template match="p">
+          <xsl:element name="{name()}">
+            <xsl:apply-templates select="*|text()[normalize-space(.) != '']"/>
+          </xsl:element>
+          </xsl:template>
+          <xsl:template match="@*" />
+        </xsl:stylesheet>""")
+    transform = lxml.etree.XSLT(filter_xslt)
+    return lxml.etree.tostring(transform(body))
