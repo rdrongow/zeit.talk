@@ -426,7 +426,7 @@ def get_previous_story(request):
     prev_teaser = None
     for teaser in gen:
         if teaser.uniqueId == uniqueId:
-            return prev_teaser
+            return build_teaser(prev_teaser)
         prev_teaser = teaser
 
 
