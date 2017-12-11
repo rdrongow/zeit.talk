@@ -123,6 +123,8 @@ class Application(object):
 
         config.add_route('lead_story', '/lead-story')
         config.add_route('read_story', '/read-story')
+        config.add_route('next_story', '/next-story')
+        config.add_route('previous_story', '/previous-story')
 
         config.set_root_factory(self.get_repository)
         config.scan(package=zeit.talk, ignore=self.DONT_SCAN)
@@ -374,24 +376,58 @@ class FeatureToggleSource(zeit.cms.content.sources.SimpleContextualXMLSource):
 FEATURE_TOGGLES = FeatureToggleSource()(None)
 
 
-@pyramid.view.view_config(
-    route_name='lead_story',
-    renderer='json')
-def get_lead_story(request):
+def get_teasers(unique_id):
     cp = zeit.cms.interfaces.ICMSContent('http://xml.zeit.de/index')
     regions = [zeit.web.core.centerpage.IRendered(x)
                for x in cp.values() if x.visible]
-    teasers = []
     for region in regions:
         for area in region.values():
             for teaser in zeit.content.cp.interfaces.ITeaseredContent(area):
                 if IArticle in zope.interface.providedBy(teaser):
-                    teasers.append(teaser)
+                    yield teaser
 
-    lead_teaser = teasers[0]
-    return {'title': lead_teaser.teaserTitle.strip(),
-            'text': lead_teaser.teaserText.strip(),
-            'uniqueId': lead_teaser.uniqueId}
+def build_teaser(teaser):
+    return {'title': teaser.teaserTitle.strip(),
+            'text': teaser.teaserText.strip(),
+            'uniqueId': teaser.uniqueId}
+
+
+@pyramid.view.view_config(
+    route_name='lead_story',
+    renderer='json')
+def get_lead_story(request):
+    teaser = next(get_teasers('http://xml.zeit.de/index'))
+    return build_teaser(teaser)
+
+
+@pyramid.view.view_config(
+    route_name='next_story',
+    renderer='json')
+def get_next_story(request):
+    uniqueId = request.params.get('uniqueId', None)
+    if not uniqueId:
+        return get_lead_story(request)
+
+    gen = get_teasers('http://xml.zeit.de/index')
+    for teaser in gen:
+        if teaser.uniqueId == uniqueId:
+            return build_teaser(next(gen))
+
+
+@pyramid.view.view_config(
+    route_name='previous_story',
+    renderer='json')
+def get_previous_story(request):
+    uniqueId = request.params.get('uniqueId', None)
+    if not uniqueId:
+        return get_lead_story(request)
+
+    gen = get_teasers('http://xml.zeit.de/index')
+    prev_teaser = None
+    for teaser in gen:
+        if teaser.uniqueId == uniqueId:
+            return prev_teaser
+        prev_teaser = teaser
 
 
 @pyramid.view.view_config(
